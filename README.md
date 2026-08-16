@@ -6,7 +6,7 @@ A polished, single-file Snake game built with HTML, CSS, and vanilla JavaScript 
 
 **https://arbazf4.github.io/snake-sprinter/**
 
-Or open `snake.html` in any browser — the whole game is one file.
+Or open `index.html` in any browser — the whole game is one file.
 
 ## Features
 
