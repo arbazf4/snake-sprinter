@@ -2,25 +2,28 @@
 
 A polished, single-file Snake game built with HTML, CSS, and vanilla JavaScript — no dependencies, no build step.
 
-## Play
+## ▶️ Play online
 
-Open `snake.html` in any browser. (The whole game is one file.)
+**https://arbazf4.github.io/snake-sprinter/**
+
+Or open `snake.html` in any browser — the whole game is one file.
 
 ## Features
 
 - Smooth interpolated movement with a glowing, gradient snake
 - Combo multiplier scoring (up to ×8)
 - Power-up food: ⭐ Double Points · 👻 Ghost Walls · 🐢 Slow Time
-- **Space** to boost with a rocket-style exhaust trail
+- Fuel-meter boost (hold Space) with a rocket-style exhaust trail — drains while boosting, refills when you ease off
+- Touch controls: swipe the board, or use the on-screen D-pad and BOOST button on phones
 - Procedural sound effects & music via the Web Audio API (mute with `M`)
-- High score saved in `localStorage`
+- Auto-pauses when you switch tabs; high score saved in `localStorage`
 
 ## Controls
 
-| Key | Action |
+| Input | Action |
 | --- | --- |
-| Arrow keys / WASD | Move |
-| Space (hold) | Boost |
+| Arrow keys / WASD (or swipe / D-pad on touch) | Move |
+| Space / BOOST button (hold) | Boost (uses fuel) |
 | P | Pause |
 | M | Sound on/off |
 | Enter / button | Restart |

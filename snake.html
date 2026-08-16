@@ -91,6 +91,61 @@
             border-radius: 12px;
             box-shadow: 0 0 30px rgba(124, 252, 156, 0.25),
                         0 0 0 2px rgba(124, 252, 156, 0.45);
+            touch-action: none;
+        }
+
+        /* Touch controls — shown only on touch devices */
+        .pad {
+            display: none;
+            margin-top: 14px;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            touch-action: manipulation;
+        }
+        @media (pointer: coarse) {
+            .pad {
+                display: flex;
+            }
+        }
+        .pad-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 54px);
+            grid-template-rows: repeat(3, 54px);
+            gap: 6px;
+        }
+        .dir,
+        .pad-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 10px;
+            border: 1px solid rgba(124, 252, 156, 0.4);
+            border-bottom: 3px solid rgba(124, 252, 156, 0.35);
+            background: linear-gradient(180deg, rgba(124, 252, 156, 0.18), rgba(124, 252, 156, 0.05));
+            color: #d7ffe2;
+            font-size: 1.2rem;
+            font-weight: 700;
+            font-family: inherit;
+            touch-action: manipulation;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        .dir {
+            font-size: 1.3rem;
+        }
+        .pad-btn {
+            min-width: 84px;
+            padding: 0 14px;
+            letter-spacing: 1px;
+            color: #060d0a;
+            background: linear-gradient(135deg, #a8ff3e, #40e0d0);
+            border: none;
+        }
+        .dir:active,
+        .pad-btn:active {
+            transform: translateY(2px);
+            box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.3);
         }
 
         .controls {
@@ -147,8 +202,16 @@
             <div>Best <span id="highScore">0</span></div>
         </div>
         <canvas id="board" width="460" height="460"></canvas>
+        <div class="pad" aria-hidden="true">
+            <div class="pad-grid">
+                <span></span><button class="dir" id="dir-up">▲</button><span></span>
+                <button class="dir" id="dir-left">◀</button><span></span><button class="dir" id="dir-right">▶</button>
+                <span></span><button class="dir" id="dir-down">▼</button><span></span>
+            </div>
+            <button class="pad-btn" id="boost-btn">BOOST</button>
+        </div>
         <div class="controls">
-            <p><b>Move</b>: arrows or WASD &nbsp;·&nbsp; <b>Space</b> boost (hold) &nbsp;·&nbsp; <b>P</b> pause &nbsp;·&nbsp; <b>M</b> sound &nbsp;·&nbsp; <b>Enter</b> restart</p>
+            <p><b>Move</b>: arrows or WASD (swipe / D-pad on touch) &nbsp;·&nbsp; <b>Space</b> boost (hold) &nbsp;·&nbsp; <b>P</b> pause &nbsp;·&nbsp; <b>M</b> sound &nbsp;·&nbsp; <b>Enter</b> restart</p>
             <p>⭐ Double Points &nbsp;·&nbsp; 👻 Ghost Walls &nbsp;·&nbsp; 🐢 Slow Time</p>
         </div>
         <button id="restart-btn">Restart Game</button>
@@ -197,18 +260,25 @@
             let gameOver = false;
             let paused = false;
             let boosting = false;               // Space held → rocket boost
+            let boostFuel = 100;                // 0..100 fuel meter for the boost
 
             const BASE_TICK = 170;
             const MIN_TICK = 68;
             const BOOST_FACTOR = 1.5;
+            const BOOST_DRAIN = 34;             // fuel units drained per second while boosting
+            const BOOST_REFILL = 20;            // fuel units recovered per second while not
             function baseTick() {
                 return Math.max(MIN_TICK, BASE_TICK - (snake.length - 3) * 4);
             }
             function hasEffect(type) {
                 return effects.some(e => e.type === type && e.timeLeft > 0);
             }
+            // Boost only engages while the key is held AND there is fuel left.
+            function boostingActive() {
+                return boosting && boostFuel > 0;
+            }
             function effectiveTick() {
-                return baseTick() * (hasEffect('slow') ? 0.55 : 1) / (boosting ? BOOST_FACTOR : 1);
+                return baseTick() * (hasEffect('slow') ? 0.55 : 1) / (boostingActive() ? BOOST_FACTOR : 1);
             }
 
             let lastTick = 0;
@@ -426,6 +496,7 @@
                 paused = false;
                 running = false;
                 acc = 0;
+                lastTick = 0;   // re-anchor the clock on every (re)start
                 tickT = 0;
                 scoreEl.textContent = score;
                 comboEl.textContent = '×1';
@@ -436,6 +507,7 @@
                 flames.length = 0;
                 popups.length = 0;
                 boosting = false;
+                boostFuel = 100;
             }
 
             function resetGame() {
@@ -496,10 +568,71 @@
                 if (e.key === ' ') { e.preventDefault(); boosting = false; }
             });
             // If the window loses focus, a Space keyup can be missed — don't leave
-            // the snake stuck in a boost.
-            window.addEventListener('blur', () => { boosting = false; });
+            // the snake stuck in a boost, and pause so it can't die unattended.
+            window.addEventListener('blur', () => {
+                boosting = false;
+                if (running && !paused && !gameOver) paused = true;
+            });
             restartBtn.addEventListener('click', () => { ensureAudio(); resetGame(); });
             muteBtn.addEventListener('click', () => { ensureAudio(); toggleMute(); });
+
+            // ---------------- Touch / on-screen controls (mobile) ----------------
+            function bindTouchControls() {
+                const dirMap = {
+                    'dir-up': { x: 0, y: -1 },
+                    'dir-down': { x: 0, y: 1 },
+                    'dir-left': { x: -1, y: 0 },
+                    'dir-right': { x: 1, y: 0 }
+                };
+                Object.keys(dirMap).forEach(id => {
+                    const btn = document.getElementById(id);
+                    if (!btn) return;
+                    btn.addEventListener('pointerdown', (e) => {
+                        e.preventDefault();
+                        ensureAudio();
+                        setDirection(dirMap[id]);
+                        beginIfIdle();
+                    });
+                });
+
+                const boostBtn = document.getElementById('boost-btn');
+                const releaseBoost = () => { boosting = false; };
+                if (boostBtn) {
+                    boostBtn.addEventListener('pointerdown', (e) => {
+                        e.preventDefault();
+                        ensureAudio();
+                        if (gameOver) resetGame();
+                        else if (!running) running = true;
+                        boosting = true;
+                    });
+                    ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev =>
+                        boostBtn.addEventListener(ev, releaseBoost));
+                }
+
+                // Swipe on the board to steer
+                if (canvas.addEventListener) {
+                    let start = null;
+                    const SWIPE_MIN = 24;   // px before a swipe counts
+                    canvas.addEventListener('touchstart', (e) => {
+                        e.preventDefault();
+                        const t = e.touches[0];
+                        start = { x: t.clientX, y: t.clientY };
+                    }, { passive: false });
+                    canvas.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+                    canvas.addEventListener('touchend', (e) => {
+                        if (!start) return;
+                        const t = e.changedTouches[0];
+                        const dx = t.clientX - start.x, dy = t.clientY - start.y;
+                        start = null;
+                        if (Math.max(Math.abs(dx), Math.abs(dy)) < SWIPE_MIN) return;
+                        ensureAudio();
+                        if (Math.abs(dx) > Math.abs(dy)) setDirection({ x: dx > 0 ? 1 : -1, y: 0 });
+                        else setDirection({ x: 0, y: dy > 0 ? 1 : -1 });
+                        beginIfIdle();
+                    });
+                }
+            }
+            bindTouchControls();
 
             // ---------------- Update ----------------
             function update() {
@@ -609,7 +742,7 @@
                     if (a.y < -4) { a.y = 464; a.x = Math.random() * 460; }
                 }
                 // Spawn rocket flames at the tail while boosting
-                if (boosting && running && !paused && !gameOver && snake.length) {
+                if (boostingActive() && running && !paused && !gameOver && snake.length) {
                     for (let k = 0; k < 2; k++) {
                         const tp = tailPos();
                         const sp = 150 + Math.random() * 130;
@@ -623,8 +756,10 @@
                         });
                     }
                 }
-                // Effect timers (pause them together with the game)
+                // Boost fuel + effect timers (both pause together with the game)
                 if (!paused && !gameOver) {
+                    if (boostingActive()) boostFuel = Math.max(0, boostFuel - BOOST_DRAIN * dt);
+                    else boostFuel = Math.min(100, boostFuel + BOOST_REFILL * dt);
                     for (let i = effects.length - 1; i >= 0; i--) {
                         effects[i].timeLeft -= dtMs;
                         if (effects[i].timeLeft <= 0) effects.splice(i, 1);
@@ -736,7 +871,7 @@
                 }
 
                 // ---- Rocket tail flame (while boosting) ----
-                if (boosting && running && !paused && !gameOver) {
+                if (boostingActive() && running && !paused && !gameOver) {
                     // Flickering teardrop flame at the tail
                     const tp = tailPos();
                     const bx = -direction.x, by = -direction.y;
@@ -823,14 +958,27 @@
                     ctx.fill();
                 }
 
-                // Effect timer bars (top of board)
+                // Boost fuel bar (top-left)
+                const fuelFrac = Math.max(0, boostFuel / 100);
+                ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                roundRect(10, 10, 120, 7, 4);
+                ctx.fill();
+                ctx.fillStyle = fuelFrac > 0.25 ? '#7cfc9c' : '#ff5252';
+                roundRect(10, 10, 120 * fuelFrac, 7, 4);
+                ctx.fill();
+                ctx.fillStyle = '#a5d6a7';
+                ctx.font = '10px "Segoe UI", sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText('BOOST', 10, 27);
+
+                // Effect timer bars (below the fuel bar)
                 if (effects.length) {
                     for (let i = 0; i < effects.length; i++) {
                         const e = effects[i];
                         const frac = e.timeLeft / (e.type === 'double' ? 10000 : e.type === 'ghost' ? 8000 : 6000);
                         const color = e.type === 'double' ? '#ffd54f' : e.type === 'ghost' ? '#b388ff' : '#4fc3f7';
                         const w = 96, h = 7;
-                        const x = 10 + i * (w + 10), y = 10;
+                        const x = 10 + i * (w + 10), y = 30;
                         ctx.fillStyle = 'rgba(0,0,0,0.55)';
                         roundRect(x, y, w, h, 4);
                         ctx.fill();
@@ -924,7 +1072,7 @@
             function loop(ts) {
                 requestAnimationFrame(loop);
 
-                const dtMs = lastFrame ? Math.min(ts - lastFrame, 100) : 0;
+                const dtMs = lastFrame ? Math.max(0, Math.min(ts - lastFrame, 100)) : 0;
                 lastFrame = ts;
 
                 updateFx(dtMs);
