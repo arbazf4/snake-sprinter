@@ -172,6 +172,17 @@
             const restartBtn = document.getElementById('restart-btn');
             const muteBtn = document.getElementById('mute-btn');
 
+            // Safe storage access — persistence degrades gracefully when
+            // localStorage is blocked (privacy mode, sandboxed file://, etc.).
+            function storageGet(key, fallback) {
+                try { return localStorage.getItem(key); }
+                catch (e) { return fallback; }
+            }
+            function storageSet(key, value) {
+                try { localStorage.setItem(key, value); }
+                catch (e) { /* persistence unavailable — ignore */ }
+            }
+
             // ---------------- Game state ----------------
             let snake = [];
             let prevSnake = null;               // positions before last tick (for interpolation)
@@ -181,7 +192,7 @@
             let special = null;                 // golden power-up food {x,y,type}
             let score = 0;
             let streak = 0;                     // foods eaten this run (drives combo + special spawns)
-            let highScore = Number(localStorage.getItem('snakeHighScore')) || 0;
+            let highScore = Number(storageGet('snakeHighScore', '0')) || 0;
             let running = false;
             let gameOver = false;
             let paused = false;
@@ -233,7 +244,7 @@
 
             // ---------------- Audio (Web Audio, no assets) ----------------
             let AC = null, master = null, sfx = null, bgm = null;
-            let muted = localStorage.getItem('snakeMuted') === '1';
+            let muted = storageGet('snakeMuted', '0') === '1';
             let musicScheduled = 0, musicStep = 0;
 
             function updateMuteBtn() {
@@ -307,6 +318,9 @@
 
             function scheduleMusic() {
                 if (!AC || muted) return;
+                // Resume from "now": skip any backlog that built up while muted
+                // or while the tab was hidden, so resuming never replays a burst.
+                musicScheduled = Math.max(musicScheduled, AC.currentTime);
                 const ahead = AC.currentTime + 0.2;
                 while (musicScheduled < ahead) {
                     const bar = Math.floor(musicStep / 16) % 4;
@@ -325,7 +339,7 @@
 
             function toggleMute() {
                 muted = !muted;
-                localStorage.setItem('snakeMuted', muted ? '1' : '0');
+                storageSet('snakeMuted', muted ? '1' : '0');
                 if (master) master.gain.value = muted ? 0 : 1;
                 updateMuteBtn();
             }
@@ -333,19 +347,31 @@
             // ---------------- Helpers ----------------
             function rand(max) { return Math.floor(Math.random() * max); }
             function cellEq(a, b) { return a.x === b.x && a.y === b.y; }
-            function hitsSnake(p) { return snake.some(s => cellEq(s, p)); }
+
+            function freeCells(exclude) {
+                const taken = new Set(snake.map(s => s.y * GRID_SIZE + s.x));
+                if (exclude) taken.add(exclude.y * GRID_SIZE + exclude.x);
+                const free = [];
+                for (let y = 0; y < GRID_SIZE; y++) {
+                    for (let x = 0; x < GRID_SIZE; x++) {
+                        if (!taken.has(y * GRID_SIZE + x)) free.push({ x, y });
+                    }
+                }
+                return free;
+            }
 
             function spawnFood() {
-                let p;
-                do { p = { x: rand(GRID_SIZE), y: rand(GRID_SIZE) }; } while (hitsSnake(p));
-                food = p;
+                // Pick from the actual free cells, so spawning always terminates
+                // even on a nearly-full board (no unbounded random retries).
+                const free = freeCells();
+                if (free.length) food = free[rand(free.length)];
             }
 
             function spawnSpecial() {
                 const entry = SPECIALS[rand(SPECIALS.length)];
-                let p;
-                do { p = { x: rand(GRID_SIZE), y: rand(GRID_SIZE) }; }
-                while (hitsSnake(p) || cellEq(p, food));
+                const free = freeCells(food);   // exclude the normal food too
+                if (!free.length) return;
+                const p = free[rand(free.length)];
                 special = { x: p.x, y: p.y, type: entry.type, entry: entry };
             }
 
@@ -469,6 +495,9 @@
             document.addEventListener('keyup', (e) => {
                 if (e.key === ' ') { e.preventDefault(); boosting = false; }
             });
+            // If the window loses focus, a Space keyup can be missed — don't leave
+            // the snake stuck in a boost.
+            window.addEventListener('blur', () => { boosting = false; });
             restartBtn.addEventListener('click', () => { ensureAudio(); resetGame(); });
             muteBtn.addEventListener('click', () => { ensureAudio(); toggleMute(); });
 
@@ -522,13 +551,15 @@
                           hasEffect('double') ? '#ffd54f' : '#7cfc9c', 14, 0.55);
                     spawnFood();
                     if (streak > 0 && streak % 5 === 0 && !special) spawnSpecial();
-                    if (score > highScore) {
-                        highScore = score;
-                        highScoreEl.textContent = highScore;
-                        localStorage.setItem('snakeHighScore', String(highScore));
-                    }
                 } else {
                     snake.pop();
+                }
+
+                // Persist a new best however the points were earned (food or power-up).
+                if (score > highScore) {
+                    highScore = score;
+                    highScoreEl.textContent = highScore;
+                    storageSet('snakeHighScore', String(highScore));
                 }
 
                 scoreEl.textContent = score;
