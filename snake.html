@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Snake Sprinter</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%90%8D%3C/text%3E%3C/svg%3E">
     <style>
         * {
             margin: 0;
@@ -28,6 +29,9 @@
             display: flex;
             flex-direction: column;
             align-items: center;
+            /* Safe centering: auto margins collapse when the content is taller
+               than the viewport, so nothing gets clipped out of scroll reach. */
+            margin: auto;
         }
 
         h1 {
@@ -128,6 +132,7 @@
             font-weight: 700;
             font-family: inherit;
             touch-action: manipulation;
+            cursor: pointer;
             -webkit-user-select: none;
             user-select: none;
         }
@@ -201,14 +206,14 @@
             <div class="combo">Combo <span id="combo">×1</span></div>
             <div>Best <span id="highScore">0</span></div>
         </div>
-        <canvas id="board" width="460" height="460"></canvas>
-        <div class="pad" aria-hidden="true">
+        <canvas id="board" width="460" height="460" role="img" aria-label="Snake Sprinter game board"></canvas>
+        <div class="pad">
             <div class="pad-grid">
-                <span></span><button class="dir" id="dir-up">▲</button><span></span>
-                <button class="dir" id="dir-left">◀</button><span></span><button class="dir" id="dir-right">▶</button>
-                <span></span><button class="dir" id="dir-down">▼</button><span></span>
+                <span></span><button class="dir" id="dir-up" aria-label="Move up">▲</button><span></span>
+                <button class="dir" id="dir-left" aria-label="Move left">◀</button><span></span><button class="dir" id="dir-right" aria-label="Move right">▶</button>
+                <span></span><button class="dir" id="dir-down" aria-label="Move down">▼</button><span></span>
             </div>
-            <button class="pad-btn" id="boost-btn">BOOST</button>
+            <button class="pad-btn" id="boost-btn" aria-label="Boost">BOOST</button>
         </div>
         <div class="controls">
             <p><b>Move</b>: arrows or WASD (swipe / D-pad on touch) &nbsp;·&nbsp; <b>Space</b> boost (hold) &nbsp;·&nbsp; <b>P</b> pause &nbsp;·&nbsp; <b>M</b> sound &nbsp;·&nbsp; <b>Enter</b> restart</p>
@@ -521,6 +526,14 @@
                 }
             }
 
+            // Tapping/clicking the board resumes from pause or starts the game —
+            // touch devices have no P key or Space after an auto-pause.
+            function handleBoardTap() {
+                ensureAudio();
+                if (paused) paused = false;
+                else if (!running && !gameOver) running = true;
+            }
+
             // ---------------- Input ----------------
             function setDirection(next) {
                 const ref = directionQueue.length ? directionQueue[directionQueue.length - 1] : direction;
@@ -569,9 +582,14 @@
             });
             // If the window loses focus, a Space keyup can be missed — don't leave
             // the snake stuck in a boost, and pause so it can't die unattended.
-            window.addEventListener('blur', () => {
+            // Mobile browsers report backgrounding via visibilitychange, not blur.
+            function lostFocus() {
                 boosting = false;
                 if (running && !paused && !gameOver) paused = true;
+            }
+            window.addEventListener('blur', lostFocus);
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) lostFocus();
             });
             restartBtn.addEventListener('click', () => { ensureAudio(); resetGame(); });
             muteBtn.addEventListener('click', () => { ensureAudio(); toggleMute(); });
@@ -609,7 +627,7 @@
                         boostBtn.addEventListener(ev, releaseBoost));
                 }
 
-                // Swipe on the board to steer
+                // Swipe on the board to steer; a short tap interacts with overlays
                 if (canvas.addEventListener) {
                     let start = null;
                     const SWIPE_MIN = 24;   // px before a swipe counts
@@ -619,17 +637,24 @@
                         start = { x: t.clientX, y: t.clientY };
                     }, { passive: false });
                     canvas.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+                    canvas.addEventListener('touchcancel', () => { start = null; }, { passive: false });
                     canvas.addEventListener('touchend', (e) => {
                         if (!start) return;
                         const t = e.changedTouches[0];
                         const dx = t.clientX - start.x, dy = t.clientY - start.y;
                         start = null;
-                        if (Math.max(Math.abs(dx), Math.abs(dy)) < SWIPE_MIN) return;
+                        if (Math.max(Math.abs(dx), Math.abs(dy)) < SWIPE_MIN) {
+                            handleBoardTap();
+                            return;
+                        }
                         ensureAudio();
                         if (Math.abs(dx) > Math.abs(dy)) setDirection({ x: dx > 0 ? 1 : -1, y: 0 });
                         else setDirection({ x: 0, y: dy > 0 ? 1 : -1 });
                         beginIfIdle();
                     });
+                    // Mouse click on the board (touch taps stay above — touchstart
+                    // is preventDefaulted, so no synthetic click fires).
+                    canvas.addEventListener('click', handleBoardTap);
                 }
             }
             bindTouchControls();
@@ -664,11 +689,13 @@
 
                 if (eatingSpecial) {
                     const entry = special.entry;
-                    addEffect(entry.type, entry);
-                    special = null;
                     streak++;
                     const mult = Math.min(streak, 8);
+                    // Award points BEFORE the effect activates, so a double-points
+                    // star doesn't double its own pickup award.
                     const pts = 40 * mult * (hasEffect('double') ? 2 : 1);
+                    addEffect(entry.type, entry);
+                    special = null;
                     score += pts;
                     popup(newHead.x * SEG + SEG / 2, newHead.y * SEG, entry.emoji + ' +' + pts, entry.color);
                     burst(newHead.x * SEG + SEG / 2, newHead.y * SEG + SEG / 2, entry.color, 22, 0.9);
@@ -838,6 +865,36 @@
                 if (hasEffect('slow'))   tintWash('rgba(79, 195, 247, 0.05)');
                 if (hasEffect('ghost'))  tintWash('rgba(179, 136, 255, 0.06)');
 
+                // Boost fuel bar + effect timer bars — drawn before the gameplay
+                // elements so they never cover the snake when it crosses the top.
+                const fuelFrac = Math.max(0, boostFuel / 100);
+                ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                roundRect(10, 10, 120, 7, 4);
+                ctx.fill();
+                ctx.fillStyle = fuelFrac > 0.25 ? '#7cfc9c' : '#ff5252';
+                roundRect(10, 10, 120 * fuelFrac, 7, 4);
+                ctx.fill();
+                ctx.fillStyle = '#a5d6a7';
+                ctx.font = '10px "Segoe UI", sans-serif';
+                ctx.textAlign = 'left';
+                ctx.fillText('BOOST', 10, 27);
+
+                if (effects.length) {
+                    for (let i = 0; i < effects.length; i++) {
+                        const e = effects[i];
+                        const frac = e.timeLeft / (e.type === 'double' ? 10000 : e.type === 'ghost' ? 8000 : 6000);
+                        const color = e.type === 'double' ? '#ffd54f' : e.type === 'ghost' ? '#b388ff' : '#4fc3f7';
+                        const w = 96, h = 7;
+                        const x = 10 + i * (w + 10), y = 30;
+                        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+                        roundRect(x, y, w, h, 4);
+                        ctx.fill();
+                        ctx.fillStyle = color;
+                        roundRect(x, y, w * frac, h, 4);
+                        ctx.fill();
+                    }
+                }
+
                 // Normal food (pulsing orb)
                 const pulse = (Math.sin(performance.now() / 180) + 1) / 2;
                 ctx.fillStyle = '#ff5252';
@@ -958,36 +1015,6 @@
                     ctx.fill();
                 }
 
-                // Boost fuel bar (top-left)
-                const fuelFrac = Math.max(0, boostFuel / 100);
-                ctx.fillStyle = 'rgba(0,0,0,0.55)';
-                roundRect(10, 10, 120, 7, 4);
-                ctx.fill();
-                ctx.fillStyle = fuelFrac > 0.25 ? '#7cfc9c' : '#ff5252';
-                roundRect(10, 10, 120 * fuelFrac, 7, 4);
-                ctx.fill();
-                ctx.fillStyle = '#a5d6a7';
-                ctx.font = '10px "Segoe UI", sans-serif';
-                ctx.textAlign = 'left';
-                ctx.fillText('BOOST', 10, 27);
-
-                // Effect timer bars (below the fuel bar)
-                if (effects.length) {
-                    for (let i = 0; i < effects.length; i++) {
-                        const e = effects[i];
-                        const frac = e.timeLeft / (e.type === 'double' ? 10000 : e.type === 'ghost' ? 8000 : 6000);
-                        const color = e.type === 'double' ? '#ffd54f' : e.type === 'ghost' ? '#b388ff' : '#4fc3f7';
-                        const w = 96, h = 7;
-                        const x = 10 + i * (w + 10), y = 30;
-                        ctx.fillStyle = 'rgba(0,0,0,0.55)';
-                        roundRect(x, y, w, h, 4);
-                        ctx.fill();
-                        ctx.fillStyle = color;
-                        roundRect(x, y, w * frac, h, 4);
-                        ctx.fill();
-                    }
-                }
-
                 // Floating particles
                 for (const p of particles) {
                     ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
@@ -1032,7 +1059,7 @@
                     ctx.fillText('Best ' + highScore + '   ·   Combo ×' + Math.min(streak || 1, 8), CENTER, box.y + 134);
                     ctx.fillStyle = '#a5d6a7';
                     ctx.font = '15px "Segoe UI", sans-serif';
-                    ctx.fillText('Space / Enter to restart', CENTER, box.y + 172);
+                    ctx.fillText('Space / Enter or tap Restart', CENTER, box.y + 172);
                 } else if (paused) {
                     const box = drawPanel(220, 120, 0.9);
                     ctx.textAlign = 'center';
@@ -1041,7 +1068,7 @@
                     ctx.fillText('PAUSED', CENTER, box.y + 52);
                     ctx.fillStyle = '#a5d6a7';
                     ctx.font = '15px "Segoe UI", sans-serif';
-                    ctx.fillText('Press P to resume', CENTER, box.y + 84);
+                    ctx.fillText('Tap the board or press P', CENTER, box.y + 84);
                 } else if (!running) {
                     drawPanel(320, 170, 0.9);
                     ctx.textAlign = 'center';
@@ -1061,10 +1088,10 @@
                     ctx.fillText('SNAKE SPRINTER', CENTER, 212);
                     ctx.fillStyle = '#a5d6a7';
                     ctx.font = '17px "Segoe UI", sans-serif';
-                    ctx.fillText('Press any arrow key to start', CENTER, 262);
+                    ctx.fillText('Tap or press an arrow key to start', CENTER, 262);
                     ctx.fillStyle = '#7d9c86';
                     ctx.font = '14px "Segoe UI", sans-serif';
-                    ctx.fillText('or tap Space', CENTER, 290);
+                    ctx.fillText('or swipe / tap Space', CENTER, 290);
                 }
             }
 
@@ -1099,6 +1126,7 @@
                 draw();
             }
 
+            let currentDpr = 1;
             function setupHiDPI() {
                 const dpr = window.devicePixelRatio || 1;
                 const size = 460;
@@ -1107,7 +1135,14 @@
                 canvas.width = size * dpr;
                 canvas.height = size * dpr;
                 ctx.scale(dpr, dpr);
+                currentDpr = dpr;
             }
+            // Re-sharpen if the window moves between monitors with a different DPR
+            // (guarded so ordinary resizes don't reset the canvas).
+            window.addEventListener('resize', () => {
+                const dpr = window.devicePixelRatio || 1;
+                if (dpr !== currentDpr) setupHiDPI();
+            });
 
             function init() {
                 setupHiDPI();
